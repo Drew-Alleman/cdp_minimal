@@ -16,5 +16,37 @@
 - randomize keylogger JS to avoid static fingerprints
 - make thread safe
 
- ## Example
- 
+ ## Building the test Binary 
+You can build a test binary with the following cmake commands. It does require boost and JSON installed.
+ ```
+PS C:\Users\drew\cdp_minimal> cmake -B build -DCMAKE_TOOLCHAIN_FILE=C:/Users/drew/vcpkg/scripts/buildsystems/vcpkg.cmake
+....
+
+PS C:\Users\drew\cdp_minimal> cmake --build build --config Debug
+MSBuild version 18.8.2+ce25c0108 for .NET Framework
+
+  1>Checking Build System
+  Building Custom Rule C:/Users/drew/cdp_minimal/CMakeLists.txt
+  browser.cpp
+  Please define _WIN32_WINNT or _WIN32_WINDOWS appropriately. For example:
+  - add -D_WIN32_WINNT=0x0601 to the compiler command line; or
+  - add _WIN32_WINNT=0x0601 to your project's Preprocessor Definitions.
+  Assuming _WIN32_WINNT=0x0601 (i.e. Windows 7 target).
+  page.cpp
+  cookie.cpp
+  result.cpp
+  channel.cpp
+  connection.cpp
+  Please define _WIN32_WINNT or _WIN32_WINDOWS appropriately. For example:
+  - add -D_WIN32_WINNT=0x0601 to the compiler command line; or
+  - add _WIN32_WINNT=0x0601 to your project's Preprocessor Definitions.
+  Assuming _WIN32_WINNT=0x0601 (i.e. Windows 7 target).
+  Generating Code...
+  cdp.vcxproj -> C:\Users\drew\cdp_minimal\build\Debug\cdp.lib
+  Building Custom Rule C:/Users/drew/cdp_minimal/CMakeLists.txt
+  main.cpp
+  cdp_test.vcxproj -> C:\Users\drew\cdp_minimal\build\Debug\cdp_test.exe
+  C:/Users/drew/cdp_minimal/build/Debug/cdp_test.exe: message: deploying dependencies
+  Building Custom Rule C:/Users/drew/cdp_minimal/CMakeLists.txt
+PS C:\Users\drew\cdp_minimal>
+```
