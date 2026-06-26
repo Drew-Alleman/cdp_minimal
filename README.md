@@ -16,7 +16,13 @@
 - randomize keylogger JS to avoid static fingerprints
 - make thread safe
 
- ## Building the test Binary 
+## Examples
+### Input Tracking
+`./examples/inputCapture.cpp`
+<img width="1352" height="783" alt="inputTracking" src="https://github.com/user-attachments/assets/8030f1fb-4f40-4696-822b-0e98fcbe424b" />
+
+
+ ### Building the test Binary 
 You can build a test binary with the following cmake commands. It does require boost and JSON installed.
  ```
 PS C:\Users\drew\cdp_minimal> cmake -B build -DCMAKE_TOOLCHAIN_FILE=C:/Users/drew/vcpkg/scripts/buildsystems/vcpkg.cmake
