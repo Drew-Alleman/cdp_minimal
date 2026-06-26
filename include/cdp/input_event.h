@@ -2,17 +2,20 @@
 
 #include <string>
 #include <cstdint>
+#include <variant>
 
 namespace cdp {
 
-    struct InputEvent {
-        std::string value;
-        std::string tag;
-        std::string id;
-        std::string name;
+    struct MouseEvent {
+        int x, y;
+        std::string type; // "mousedown", "mousemove", etc.
         std::string url;
-        std::string title;
-        std::int64_t timestamp = 0;
+    };
+
+    struct KeyboardEvent {
+        std::string key;
+        bool repeat;
+        std::string url;
     };
 
     struct ActivityEvent {
@@ -29,5 +32,7 @@ namespace cdp {
         bool focused = false;
         std::int64_t last_active = 0;
     };
+
+    using InputEvent = std::variant<MouseEvent, KeyboardEvent>;
 
 } // namespace cdp
