@@ -2,6 +2,7 @@
 #include "detail/channel.h"
 #include "detail/base64.h"
 #include "cdp/page.h"
+#include <cdp/input_event.h> // Added for InputEvent struct
 
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -154,7 +155,7 @@ namespace cdp {
         return cdp::select(all_cookies.value(), filter);
     }
 
-    // ==================== Callbacks (FIXED) ====================
+    // ==================== Callbacks ====================
 
     Browser::CallbackId Browser::addOnInput(InputCallback cb) {
         if (!cb) return 0;
@@ -217,14 +218,17 @@ namespace cdp {
   window.__cdpArmed = true;
   function emit(type, e) {
     try {
-      __onMouse(JSON.stringify({
-        type: type,
-        x: e.clientX, y: e.clientY,
-        button: (e.button !== undefined ? e.button : null),
-        key: (e.key || null),
-        url: location.href
-      }));
-    } catch (err) { console.error("__onMouse FAILED:", err && err.message); }
+      // Ensure these keys match exactly what you look for in C++
+// From browser.cpp
+let data = {
+  type: type,
+  x: e.clientX || 0,
+  y: e.clientY || 0,
+  key: e.key || "",
+  url: location.href
+};
+__onMouse(JSON.stringify(data));
+    } catch (err) { console.error("__onMouse FAILED:", err); }
   }
   window.addEventListener('mousemove', function (e) { emit('mousemove', e); }, true);
   window.addEventListener('mousedown', function (e) { emit('mousedown', e); }, true);
@@ -243,6 +247,96 @@ namespace cdp {
   }, 1000);
 })();
 )JS";
+
+    // ==================== Impl Handlers (FIXED) ====================
+
+    void Browser::Impl::handle_attached_to_target(const json& ev) {
+        try {
+            std::string session_id = ev["params"]["sessionId"];
+            std::string target_id = ev["params"]["targetInfo"]["targetId"];
+            std::string type = ev["params"]["targetInfo"]["type"];
+
+            // Inject listeners into active pages
+            if (type == "page") {
+                arm_target(session_id, target_id, type);
+            }
+        }
+        catch (...) {}
+    }
+
+    void Browser::Impl::arm_target(const std::string& sid, const std::string& tid, const std::string& type, const std::string& initialUrl) {
+        try {
+            channel->result_of("Runtime.enable", json::object(), sid);
+            channel->result_of("Page.enable", json::object(), sid);
+
+            // Register C++ binding
+            channel->result_of("Runtime.addBinding", { {"name", "__onMouse"} }, sid);
+
+            // Inject JS listener
+            json script_res = channel->result_of("Page.addScriptToEvaluateOnNewDocument",
+                { {"source", PAGE_LISTENER_JS} }, sid);
+
+            std::string script_id = script_res["identifier"];
+            tid_to_script[tid] = script_id;
+            tid_to_sid[tid] = sid;
+            armed_targets.insert(tid);
+
+            // Evaluate immediately for existing page
+            channel->result_of("Runtime.evaluate", { {"expression", PAGE_LISTENER_JS} }, sid);
+
+        }
+        catch (const std::exception& e) {
+            if (DEBUG_LOG_ALL_EVENTS) std::cerr << "Failed to arm target: " << e.what() << std::endl;
+        }
+    }
+
+    void Browser::Impl::handle_binding_called(const json& ev) {
+        try {
+            // 1. Parse and extract type
+            json payload = json::parse(ev["params"]["payload"].get<std::string>());
+            std::string type = payload.value("type", "");
+
+            // 2. Prepare the variant to be sent to callbacks
+            InputEvent current_event;
+
+            if (type == "mousedown" || type == "mousemove") {
+                current_event = MouseEvent{
+                    payload.value("x", 0),
+                    payload.value("y", 0),
+                    type,
+                    payload.value("url", "")
+                };
+            }
+            else if (type == "keydown") {
+                current_event = KeyboardEvent{
+                    payload.value("key", ""),
+                    false,
+                    payload.value("url", "")
+                };
+            }
+            else {
+                return; // Ignore unknown event types
+            }
+
+            // 3. Dispatch the variant to all registered callbacks
+            std::lock_guard<std::mutex> lock(callback_mtx);
+            for (const auto& [id, cb] : on_input_callbacks) {
+                if (cb) cb(current_event);
+            }
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Binding parse error: " << e.what() << std::endl;
+        }
+    }
+
+    // --- Empty Stubs to prevent linker errors ---
+    void Browser::Impl::handle_target_created(const json& ev) {}
+    void Browser::Impl::handle_detached_from_target(const json& ev) {}
+    void Browser::Impl::handle_page_navigation(const json& ev) {}
+    void Browser::Impl::handle_network_request_will_be_sent(const json& ev) {}
+    void Browser::Impl::handle_network_response_received(const json& ev) {}
+    void Browser::Impl::handle_network_loading_failed(const json& ev) {}
+    void Browser::Impl::fire_url(const std::string& url) {}
 
     // ==================== watchInput ====================
 
@@ -530,7 +624,7 @@ namespace cdp {
             (async () => {
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoDevices = devices.filter(d => d.kind === 'videoinput');
-               
+                
                 if (videoDevices.length === 0) return { error: "No camera found" };
                 if ()JS" + std::to_string(cameraIndex) + R"JS( >= videoDevices.length)
                     return { error: "Invalid camera index" };
@@ -800,185 +894,9 @@ namespace cdp {
                 http::async_read(stream, buffer, res, [&](beast::error_code e, std::size_t) { ec = e; });
                 ioc.run(); ioc.restart();
                 if (ec) return {};
-                beast::error_code ignore;
-                stream.socket().shutdown(tcp::socket::shutdown_both, ignore);
-                if (res.result() != http::status::ok) return {};
                 return res.body();
             }
-            catch (...) {
-                return {};
-            }
+            catch (...) { return {}; }
         }
     }
-
-    // ==================== Impl Member Functions ====================
-
-    void Browser::Impl::fire_url(const std::string& url) {
-        if (url.empty()) return;
-        std::vector<URLCallback> callbacks;
-        {
-            std::lock_guard<std::mutex> lk(callback_mtx);
-            for (auto& [id, cb] : on_url_callbacks)
-                if (cb) callbacks.push_back(cb);
-        }
-        for (auto& cb : callbacks) {
-            try { cb(url); }
-            catch (...) {}
-        }
-    }
-
-    void Browser::Impl::arm_target(const std::string& sid, const std::string& tid,
-        const std::string& type, const std::string& initialUrl)
-    {
-        if (sid.empty() || tid.empty()) return;
-        if (type != "page" && type != "iframe") return;
-        if (!armed_targets.insert(tid).second) return;
-        try {
-            channel->result_of("Runtime.enable", json::object(), sid);
-            channel->result_of("Page.enable", json::object(), sid);
-            channel->result_of("Network.enable", json::object(), sid);
-            channel->result_of("Runtime.addBinding", { {"name", "__onMouse"} }, sid);
-            json r = channel->result_of("Page.addScriptToEvaluateOnNewDocument",
-                { {"source", PAGE_LISTENER_JS} }, sid);
-            if (r.contains("identifier"))
-                tid_to_script[tid] = r["identifier"].get<std::string>();
-            channel->result_of("Runtime.evaluate", { {"expression", PAGE_LISTENER_JS} }, sid);
-            if (DEBUG_HEARTBEAT)
-                channel->result_of("Runtime.evaluate", { {"expression", HEARTBEAT_JS} }, sid);
-            tid_to_sid[tid] = sid;
-            std::string url = initialUrl;
-            if (url.empty()) {
-                try {
-                    json urlRes = channel->result_of("Runtime.evaluate",
-                        { {"expression", "location.href"}, {"returnByValue", true} }, sid);
-                    if (urlRes.contains("result") && urlRes["result"].contains("value"))
-                        url = urlRes["result"]["value"].get<std::string>();
-                }
-                catch (...) {}
-            }
-            fire_url(url);
-        }
-        catch (const std::exception& e) {
-            armed_targets.erase(tid);
-        }
-    }
-
-    void Browser::Impl::handle_attached_to_target(const json& ev) {
-        const auto& p = ev["params"];
-        const auto& ti = p.value("targetInfo", json::object());
-        arm_target(p.value("sessionId", ""), ti.value("targetId", ""),
-            ti.value("type", ""), ti.value("url", ""));
-    }
-
-    void Browser::Impl::handle_target_created(const json& ev) {
-        try {
-            const auto& ti = ev["params"]["targetInfo"];
-            std::string type = ti.value("type", "");
-            std::string targetId = ti.value("targetId", "");
-            std::string url = ti.value("url", "");
-            if (type == "page" && !armed_targets.count(targetId)) {
-                json attach = channel->result_of("Target.attachToTarget",
-                    { {"targetId", targetId}, {"flatten", true} }, "");
-                std::string newSessionId = attach.value("sessionId", "");
-                if (!newSessionId.empty())
-                    arm_target(newSessionId, targetId, type, url);
-            }
-        }
-        catch (...) {}
-    }
-
-    void Browser::Impl::handle_detached_from_target(const json& ev) {
-        const std::string sid = ev["params"].value("sessionId", "");
-        for (auto it = tid_to_sid.begin(); it != tid_to_sid.end(); ++it) {
-            if (it->second == sid) {
-                armed_targets.erase(it->first);
-                tid_to_script.erase(it->first);
-                tid_to_sid.erase(it);
-                break;
-            }
-        }
-    }
-
-    void Browser::Impl::handle_page_navigation(const json& ev) {
-        try {
-            if (ev.value("method", "") == "Page.frameNavigated") {
-                const auto& frame = ev["params"]["frame"];
-                if (frame.value("parentId", "").empty()) {
-                    fire_url(frame.value("url", ""));
-                }
-            }
-            else {
-                fire_url(ev["params"].value("url", ""));
-            }
-        }
-        catch (...) {}
-    }
-
-    void Browser::Impl::handle_binding_called(const json& ev) {
-        const int ctx = ev.value("params", json::object()).value("executionContextId", -1);
-        const std::string sid = ev.value("sessionId", "");
-        try {
-            json d = json::parse(ev.value("params", json::object()).value("payload", "{}"));
-            const std::string type = d.value("type", "");
-            if (type == "hb") return;
-            const bool is_key = (type == "keydown" || type == "keyup");
-            const bool is_btn = (type == "mousedown" || type == "mouseup" ||
-                type == "click" || type == "contextmenu");
-            (void)ctx; (void)sid; (void)is_key; (void)is_btn;
-        }
-        catch (...) {}
-    }
-
-    void Browser::Impl::handle_network_request_will_be_sent(const json& ev) {
-        try {
-            const auto& p = ev["params"];
-            std::string url = p.value("request", json::object()).value("url", "");
-            std::string reqMethod = p.value("request", json::object()).value("method", "GET");
-            std::string resourceType = p.value("type", "Other");
-            if (url.empty() || url.find("data:") == 0 || url.find("chrome-extension:") == 0)
-                return;
-            if (resourceType == "Other" || resourceType == "XHR")
-                return;
-            static const char* kNoiseHosts[] = {
-                "klaviyo.com", "google-analytics.com", "googletagmanager.com",
-                "doubleclick.net", "facebook.com/tr", "analytics.", "/collect",
-            };
-            bool noisy = false;
-            for (auto* h : kNoiseHosts)
-                if (url.find(h) != std::string::npos) { noisy = true; break; }
-            if (noisy) return;
-        }
-        catch (...) {}
-    }
-
-    void Browser::Impl::handle_network_response_received(const json& ev) {
-        try {
-            const auto& p = ev["params"];
-            int status = p.value("response", json::object()).value("status", 0);
-            std::string url = p.value("response", json::object()).value("url", "");
-            std::string resourceType = p.value("type", "Other");
-            if (url.empty() || url.find("data:") == 0) return;
-            if (resourceType == "Other" || resourceType == "XHR")
-                return;
-            static const char* kNoiseHosts[] = {
-                "klaviyo.com", "google-analytics.com", "googletagmanager.com",
-                "doubleclick.net", "facebook.com/tr", "analytics.", "/collect",
-            };
-            bool noisy = false;
-            for (auto* h : kNoiseHosts)
-                if (url.find(h) != std::string::npos) { noisy = true; break; }
-            if (noisy) return;
-        }
-        catch (...) {}
-    }
-
-    void Browser::Impl::handle_network_loading_failed(const json& ev) {
-        try {
-            const auto& p = ev["params"];
-            std::string url = p.value("request", json::object()).value("url", "");
-            std::string errorText = p.value("errorText", "Unknown error");
-        }
-        catch (...) {}
-    }
-
 } // namespace cdp
