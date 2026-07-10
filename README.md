@@ -9,6 +9,7 @@
 - Audio Capture / List audio devices
 - Screenshotting
 - Cookie Theft
+- Global Clipboard Read/Write
 
 ## To-do
 - Remove Boost dependecency
