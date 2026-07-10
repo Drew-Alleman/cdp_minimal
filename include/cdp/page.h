@@ -24,6 +24,9 @@ namespace cdp {
 
         Result<std::string> getURL();
         Result<void>        bringToFront();
+        Result<void> grantClipboardPermission();
+        Result<std::string> getClipboardText();
+        Result<void> setClipboardText(const std::string& text);
 
         bool valid() const noexcept;
 

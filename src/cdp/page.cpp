@@ -208,5 +208,72 @@ namespace cdp {
                 "Failed to get page content: " + std::string(e.what()) };
         }
     }
+    Result<void> Page::grantClipboardPermission() {
+        if (!channel_) {
+            return Error{ Errc::not_connected, "invalid page handle" };
+        }
+
+        try {
+            auto originRes = evaluate(R"(window.location.origin)");
+            if (!originRes) {
+                return Error{ Errc::bad_response,
+                    "Failed to read page origin: " + originRes.error().message };
+            }
+
+            std::string origin = originRes.value();
+
+            // evaluate() may return the JS string quoted ("https://example.com") or the
+            // literal null — reject anything that isn't a real origin.
+            if (origin.empty() || origin == "null" || origin == "\"null\"") {
+                return Error{ Errc::bad_response,
+                    "Page has an opaque origin (about:blank/data:/chrome:) — "
+                    "navigate to a real http(s) origin before granting clipboard permission" };
+            }
+
+            json params = {
+                {"origin", origin},
+                {"permissions", json::array({ "clipboardReadWrite", "clipboardSanitizedWrite" })}
+            };
+            channel_->result_of("Browser.grantPermissions", params, session_id_);;
+
+            return {};
+        }
+        catch (const detail::TimeoutError& e) {
+            return Error{ Errc::timeout, e.what() };
+        }
+        catch (const std::exception& e) {
+            return Error{ Errc::bad_response, "Failed to grant clipboard permission: " + std::string(e.what()) };
+        }
+    }
+
+    Result<std::string> Page::getClipboardText() {
+
+        if (!channel_) {
+            return Error{ Errc::not_connected, "invalid page handle" };
+        }
+
+        grantClipboardPermission();
+
+        // Reuse your existing evaluate method
+        return evaluate(R"(navigator.clipboard.readText())");
+    }
+
+    Result<void> Page::setClipboardText(const std::string& text) {
+        if (!channel_) {
+            return Error{ Errc::not_connected, "invalid page handle" };
+        }
+
+        // 1. Grant permission (safe to call every time)
+        auto perm = grantClipboardPermission();
+        if (!perm) return perm.error();
+
+        // 2. Write to the real system clipboard
+        std::string js = "navigator.clipboard.writeText(" + json(text).dump() + ")";
+
+        auto res = evaluate(js);
+        if (!res) return res.error();
+
+        return {};
+    }
 
 } // namespace cdp

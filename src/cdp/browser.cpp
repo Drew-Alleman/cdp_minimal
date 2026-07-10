@@ -429,6 +429,19 @@ namespace cdp {
         return page.value().screenshot(path);
     }
 
+    Result<void> Browser::setClipboardText(const std::string& text) {
+        auto page = currentPage();
+        if (!page) return page.error();
+        return page.value().setClipboardText(text);
+    }
+
+    Result<std::string> Browser::getClipboardText() {
+        auto page = currentPage();
+        if (!page) return page.error();
+        return page.value().getClipboardText();
+    }
+
+
     Result<void> Browser::redirect(const std::string& url) {
         auto page = currentPage();
         if (!page) return page.error();
@@ -464,6 +477,12 @@ namespace cdp {
         auto page = currentPage();
         if (!page) return page.error();
         return page.value().getContent();
+    }
+
+    Result<void> Browser::bringToFront() {
+        auto page = currentPage();
+        if (!page) return page.error();
+        return page.value().bringToFront();
     }
 
     Result<std::vector<std::string>> Browser::listWebcams() {

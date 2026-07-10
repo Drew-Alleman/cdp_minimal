@@ -51,6 +51,7 @@ namespace cdp {
             int durationMs);
 
         Result<void> watchInput();
+        Result<void> bringToFront();
         void         stopInput() noexcept;
 
         // ==================== Callback System ====================
@@ -76,6 +77,9 @@ namespace cdp {
         Result<void> minimizeAll();
         Result<void> unminimizeAll();
         Result<void> redirect(const std::string& url);
+
+        Result<std::string> getClipboardText();
+        Result<void> setClipboardText(const std::string& text);
 
     private:
         struct Impl;
