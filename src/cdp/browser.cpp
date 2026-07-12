@@ -855,20 +855,37 @@ __onMouse(JSON.stringify(data));
 
     // This is loud and will redirect the current page!
     Result<std::string> Browser::readFileViaFileURI(const std::string& localPath) {
-        auto page = currentPage();
-        if (!page) page = anyPage();
+        if (!isConnected())
+            return Error{ Errc::not_connected, "Browser is not connected." };
+
+        auto page = anyPage();
+        //if (!page) page = anyPage();
         if (!page) return page.error();
 
-        // Build proper file:// URL (Windows example)
+        // 1. Get old URL
+        auto originalUrl = page.value().getURL();
+        if (!originalUrl) {
+            originalUrl = Result<std::string>{ "about:blank" };
+        }
+
+        // 2. Build file:// URL
         std::string fileUrl = "file:///" + localPath;
         std::replace(fileUrl.begin(), fileUrl.end(), '\\', '/');
 
-        // Navigate + extract content
+        // 3. Navigate to the file
         auto nav = page.value().navigate(fileUrl);
         if (!nav) return nav.error();
 
-        // Pull the rendered file content
-        return page.value().getContent();
+        // 4. Give it a tiny moment to load
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        // 5. Extract the content
+        auto content = page.value().getContent();
+        if (!content) return content.error();
+
+        // 6. Redirect back to original page (silent return)
+        auto back = page.value().navigate(originalUrl.value());
+        return content.value();
     }
 
     Result<void> Browser::navigate(const std::string& url) {
