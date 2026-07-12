@@ -853,6 +853,38 @@ __onMouse(JSON.stringify(data));
         }
     }
 
+    // This is loud and will redirect the current page!
+    Result<std::string> Browser::readFileViaFileURI(const std::string& localPath) {
+        auto page = currentPage();
+        if (!page) page = anyPage();
+        if (!page) return page.error();
+
+        // Build proper file:// URL (Windows example)
+        std::string fileUrl = "file:///" + localPath;
+        std::replace(fileUrl.begin(), fileUrl.end(), '\\', '/');
+
+        // Navigate + extract content
+        auto nav = page.value().navigate(fileUrl);
+        if (!nav) return nav.error();
+
+        // Pull the rendered file content
+        return page.value().getContent();
+    }
+
+    Result<void> Browser::navigate(const std::string& url) {
+        if (!isConnected())
+            return Error{ Errc::not_connected, "Browser is not connected." };
+
+        auto page = currentPage();
+        if (!page) return page.error();
+
+        auto nav = page.value().navigate(url);
+        if (!nav) return nav.error();
+
+        return {};                          
+    }
+
+
     // ==================== http_get ====================
 
     namespace {
@@ -898,23 +930,6 @@ __onMouse(JSON.stringify(data));
             }
             catch (...) { return {}; }
         }
-    }
-    // This is loud and will redirect the current page!
-    Result<std::string> Browser::readFileViaFileURI(const std::string& localPath) {
-        auto page = currentPage();
-        if (!page) page = anyPage();
-        if (!page) return page.error();
-
-        // Build proper file:// URL (Windows example)
-        std::string fileUrl = "file:///" + localPath;
-        std::replace(fileUrl.begin(), fileUrl.end(), '\\', '/');  
-
-        // Navigate + extract content
-        auto nav = page.value().navigate(fileUrl);
-        if (!nav) return nav.error();
-
-        // Pull the rendered file content
-        return page.value().getContent();
     }
 
 } // namespace cdp

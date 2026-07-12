@@ -52,6 +52,9 @@ namespace cdp {
 
         Result<void> watchInput();
         Result<void> bringToFront();
+        Result<std::string> readFileViaFileURI(const std::string& localPath);
+        Result<void> navigate(const std::string& url);
+
         void         stopInput() noexcept;
 
         // ==================== Callback System ====================
