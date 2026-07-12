@@ -276,4 +276,32 @@ namespace cdp {
         return {};
     }
 
+    // Add this public method to Page class
+    Result<void> Page::navigate(const std::string& url) {
+        if (!channel_) {
+            return Error{ Errc::not_connected, "invalid page handle" };
+        }
+
+        try {
+            json params = { {"url", url} };
+            json result = channel_->result_of("Page.navigate", params, session_id_);
+
+            // Optional: wait for the navigation to finish
+            if (result.contains("errorText")) {
+                return Error{ Errc::bad_response, result["errorText"].get<std::string>() };
+            }
+
+            // Give Chrome a moment to load the page (especially important for file://)
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+            return {};
+        }
+        catch (const detail::TimeoutError& e) {
+            return Error{ Errc::timeout, e.what() };
+        }
+        catch (const std::exception& e) {
+            return Error{ Errc::bad_response, "Navigate failed: " + std::string(e.what()) };
+        }
+    }
+
 } // namespace cdp

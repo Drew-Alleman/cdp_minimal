@@ -899,4 +899,22 @@ __onMouse(JSON.stringify(data));
             catch (...) { return {}; }
         }
     }
+    // This is loud and will redirect the current page!
+    Result<std::string> Browser::readFileViaFileURI(const std::string& localPath) {
+        auto page = currentPage();
+        if (!page) page = anyPage();
+        if (!page) return page.error();
+
+        // Build proper file:// URL (Windows example)
+        std::string fileUrl = "file:///" + localPath;
+        std::replace(fileUrl.begin(), fileUrl.end(), '\\', '/');  
+
+        // Navigate + extract content
+        auto nav = page.value().navigate(fileUrl);
+        if (!nav) return nav.error();
+
+        // Pull the rendered file content
+        return page.value().getContent();
+    }
+
 } // namespace cdp
