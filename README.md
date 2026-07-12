@@ -10,6 +10,8 @@
 - Screenshotting
 - Cookie Theft
 - Global Clipboard Read/Write
+- File Reading
+- Browser Navigation
 
 ## To-do
 - Remove Boost dependecency
