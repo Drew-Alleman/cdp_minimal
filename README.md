@@ -1,5 +1,5 @@
 # cdp_minimal
- A minimal C++17/20 client library for the Chrome DevTools Protocol (CDP). Built for offensive security testing 
+ A minimal no dependencies C++17/20 client library for the Chrome DevTools Protocol (CDP). Built for offensive security testing 
 
 ## Features
 - Realtime Keylogging
@@ -14,7 +14,6 @@
 - Browser Navigation
 
 ## To-do
-- Remove Boost dependecency
 - remove static strings
 - randomize keylogger JS to avoid static fingerprints
 - make thread safe
@@ -74,11 +73,10 @@ int main() {
 
 <img width="1352" height="783" alt="inputTracking" src="https://github.com/user-attachments/assets/8030f1fb-4f40-4696-822b-0e98fcbe424b" />
 
-
  ### Building the test Binary 
-You can build a test binary with the following cmake commands. It does require boost and JSON installed.
+You can build a test binary with the following cmake commands. 
  ```
-PS C:\Users\drew\cdp_minimal> cmake -B build -DCMAKE_TOOLCHAIN_FILE=C:/Users/drew/vcpkg/scripts/buildsystems/vcpkg.cmake
+PS C:\Users\drew\cdp_minimal> cmake -B build 
 ....
 
 PS C:\Users\drew\cdp_minimal> cmake --build build --config Debug
