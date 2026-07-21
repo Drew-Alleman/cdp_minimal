@@ -29,6 +29,44 @@ namespace cdp {
 
     namespace {
         std::string http_get(const std::string& host, const std::string& port, const std::string& target);
+        
+        std::string jsQuote(const std::string& s) {
+            std::string out;
+            out.reserve(s.size() + 2);
+            out.push_back('"');
+        
+            for (unsigned char c : s) {
+                switch (c) {
+                    case '"':  out += "\\\""; break;
+                    case '\\': out += "\\\\"; break;
+                    case '\b': out += "\\b";  break;
+                    case '\f': out += "\\f";  break;
+                    case '\n': out += "\\n";  break;
+                    case '\r': out += "\\r";  break;
+                    case '\t': out += "\\t";  break;
+                    case '/':
+                        // Escape '/' so the sequence "</script>" can't
+                        // prematurely close a <script> tag if this JS is
+                        // ever inlined into HTML. Harmless otherwise.
+                        out += "\\/";
+                        break;
+                    default:
+                        if (c < 0x20) {
+                            // Other control chars -> \xNN
+                            char buf[8];
+                            std::snprintf(buf, sizeof(buf), "\\x%02X", c);
+                            out += buf;
+                        } else {
+                            out.push_back(static_cast<char>(c));
+                        }
+                        break;
+                }
+            }
+        
+            out.push_back('"');
+            return out;
+        }
+
     }
 
     struct Browser::Impl {
