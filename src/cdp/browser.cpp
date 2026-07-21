@@ -876,39 +876,85 @@ __onMouse(JSON.stringify(data));
     }
 
     // This is loud and will redirect the current page!
-    Result<std::string> Browser::readFileViaFileURI(const std::string& localPath) {
-        if (!isConnected())
-            return Error{ Errc::not_connected, "Browser is not connected." };
+Result<std::string> Browser::readFileViaFileURI(const std::string& localPath) {
+    if (!isConnected())
+        return Error{ Errc::not_connected, "Browser is not connected." };
 
-        auto page = anyPage();
-        //if (!page) page = anyPage();
-        if (!page) return page.error();
+    auto page = anyPage();
+    if (!page) return page.error();
 
-        // 1. Get old URL
-        auto originalUrl = page.value().getURL();
-        if (!originalUrl) {
-            originalUrl = Result<std::string>{ "about:blank" };
-        }
+    auto originalUrl = page.value().getURL();
+    if (!originalUrl)
+        originalUrl = Result<std::string>{ "about:blank" };
 
-        // 2. Build file:// URL
-        std::string fileUrl = "file:///" + localPath;
-        std::replace(fileUrl.begin(), fileUrl.end(), '\\', '/');
+    // Normalize the target path -> file URL for the BINARY we want to read.
+    std::string target = localPath;
+    std::replace(target.begin(), target.end(), '\\', '/');
+    std::string fileUrl = "file:///" + target;
 
-        // 3. Navigate to the file
-        auto nav = page.value().navigate(fileUrl);
-        if (!nav) return nav.error();
-
-        // 4. Give it a tiny moment to load
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-
-        // 5. Extract the content
-        auto content = page.value().getContent();
-        if (!content) return content.error();
-
-        // 6. Redirect back to original page (silent return)
-        auto back = page.value().navigate(originalUrl.value());
-        return content.value();
+    // Write a tiny HTML "reader" page. Chrome RENDERS html (no download),
+    // giving us a file:// origin we can XHR from. Put it beside the target so
+    // both share the same directory/origin.
+    std::string dir = target.substr(0, target.find_last_of('/'));
+    std::string helperPath = dir + "/.cdp_reader.html";
+    {
+        std::ofstream h(helperPath, std::ios::binary | std::ios::trunc);
+        if (!h) return Error{ Errc::bad_response, "Cannot write reader helper: " + helperPath };
+        h << "<!doctype html><meta charset=utf-8><title>reader</title>";
     }
+    std::string helperUrl = "file:///" + helperPath;
+
+    auto cleanup = [&] { std::remove(helperPath.c_str()); };
+
+    // Navigate to the HTML helper (renders -> no auto-download).
+    auto nav = page.value().navigate(helperUrl);
+    if (!nav) { cleanup(); return nav.error(); }
+
+    // Wait for it to actually load (navigate returns before load completes).
+    bool loaded = false;
+    for (int i = 0; i < 200; ++i) {                 // up to ~10s
+        auto rs = page.value().evaluate("document.readyState");
+        if (rs && rs.value().find("complete") != std::string::npos) {
+            loaded = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!loaded) {
+        page.value().navigate(originalUrl.value());
+        cleanup();
+        return Error{ Errc::timeout, "Reader helper did not finish loading." };
+    }
+
+    // From the helper's file:// origin, XHR the BINARY file (a different URL,
+    // same file:// scheme). x-user-defined + &0xff recovers raw bytes.
+    std::string script =
+        "(function () {\n"
+        "    var url = " + jsQuote(fileUrl) + ";\n"
+        "    var xhr = new XMLHttpRequest();\n"
+        "    xhr.open('GET', url, false);\n"
+        "    xhr.overrideMimeType('text/plain; charset=x-user-defined');\n"
+        "    xhr.send();\n"
+        "    if (xhr.status && xhr.status !== 200 && xhr.status !== 0)\n"
+        "        throw new Error('HTTP ' + xhr.status);\n"
+        "    var t = xhr.responseText, bin = '';\n"
+        "    for (var i = 0; i < t.length; i++)\n"
+        "        bin += String.fromCharCode(t.charCodeAt(i) & 0xff);\n"
+        "    return btoa(bin);\n"
+        "})()";
+
+    auto b64 = page.value().evaluate(script);
+
+    // Restore the original page and remove the helper file.
+    page.value().navigate(originalUrl.value());
+    cleanup();
+
+    if (!b64) return b64.error();
+    if (b64.value().empty())
+        return Error{ Errc::bad_response, "XHR returned no data (file:// access blocked?)." };
+
+    return cdp::detail::base64Decode(b64.value());
+}
 
     Result<void> Browser::navigate(const std::string& url) {
         if (!isConnected())
