@@ -1,13 +1,13 @@
 #include "cdp/page.h"
 #include "detail/channel.h"
 #include "detail/base64.h"
+#include "detail/json.hpp"
 
 #include <fstream>
-#include <nlohmann/json.hpp>
-
-using json = nlohmann::json;
 
 namespace cdp {
+
+    using json = njson::json;
 
     Page::Page(std::shared_ptr<detail::Channel> channel,
         std::string target_id,
@@ -303,5 +303,30 @@ namespace cdp {
             return Error{ Errc::bad_response, "Navigate failed: " + std::string(e.what()) };
         }
     }
+
+    //Result<void> Page::click(const std::string& selector) {
+    //    if (!channel_) {
+    //        return Error{ Errc::not_connected, "invalid page handle" };
+    //    }
+
+    //    // Simple and reliable JS click
+    //    std::string js =
+    //        "(() => {"
+    //        "  const el = document.querySelector(" + json(selector).dump() + ");"
+    //        "  if (!el) return 'not_found';"
+    //        "  el.click();"
+    //        "  return 'ok';"
+    //        "})()";
+
+    //    auto res = evaluate(js);
+    //    if (!res) return res.error();
+    //    if (res.value() == "not_found") {
+    //        return Error{ Errc::element_not_found, "no element matches: " + selector };
+    //    }
+    //}
+
+    //Result<void> Page::clickById(const std::string& id) {
+    //    return click("#" + id);   // converts id to #id selector
+    //}
 
 } // namespace cdp

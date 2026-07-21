@@ -13,12 +13,12 @@
 #include <string>
 #include <thread>
 
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include "connection.h"
 
 namespace cdp::detail {
 
-    using json = nlohmann::json;
+    using json = njson::json;
 
     class Channel {
     public:
@@ -54,8 +54,8 @@ namespace cdp::detail {
         void set_timeout(std::chrono::milliseconds ms) noexcept { command_timeout_ = ms; }
 
     private:
-        void reader_loop();                      
-        void stop_reader() noexcept;           
+        void reader_loop();
+        void stop_reader() noexcept;
         void fail_all_pending(const std::string& why);
 
         Connection conn_;
@@ -80,4 +80,4 @@ namespace cdp::detail {
         std::chrono::milliseconds event_poll_interval_{ 1000 };  // reader read deadline
     };
 
-} // namespace cdp
+} // namespace cdp::detail

@@ -1,14 +1,12 @@
 #include "cdp/browser.h"
 #include "detail/channel.h"
 #include "detail/base64.h"
+#include "detail/json.hpp"
 #include "cdp/page.h"
 #include <cdp/input_event.h> // Added for InputEvent struct
+#include "detail/http.h"
 
 #include <iostream>
-#include <nlohmann/json.hpp>
-#include <boost/asio.hpp>
-#include <boost/beast.hpp>
-#include <boost/beast/http.hpp>
 #include <fstream>
 #include <thread>
 #include <chrono>
@@ -21,7 +19,7 @@
 #include <map>
 #include <unordered_set>
 
-using json = nlohmann::json;
+using json = njson::json;
 
 // ---- debug toggles ----
 static constexpr bool DEBUG_LOG_ALL_EVENTS = false;
@@ -65,11 +63,22 @@ namespace cdp {
         void handle_attached_to_target(const json& ev);
         void handle_target_created(const json& ev);
         void handle_detached_from_target(const json& ev);
-        void handle_page_navigation(const json& ev);
         void handle_binding_called(const json& ev);
         void handle_network_request_will_be_sent(const json& ev);
         void handle_network_response_received(const json& ev);
         void handle_network_loading_failed(const json& ev);
+
+        void handle_page_navigation(const json& ev) {
+            // Page.frameNavigated — only report the main frame
+            const auto& params = ev["params"];
+            if (params.contains("frame")) {
+                const auto& frame = params["frame"];
+                if (!frame.contains("parentId")) {
+                    std::string url = frame.value("url", "");
+                    if (!url.empty()) fire_url(url);
+                }
+            }
+        }
 
         ~Impl() {
             if (watch_thread.joinable()) {
@@ -98,7 +107,7 @@ namespace cdp {
 
     bool Browser::connect() {
         try {
-            std::string payload = http_get(impl_->host, impl_->port, "/json/version");
+            std::string payload = detail::http_get(impl_->host, impl_->port, "/json/version");
             if (payload.empty()) return false;
 
             auto j = json::parse(payload);
@@ -156,6 +165,7 @@ namespace cdp {
     }
 
     // ==================== Callbacks ====================
+
 
     Browser::CallbackId Browser::addOnInput(InputCallback cb) {
         if (!cb) return 0;
@@ -332,11 +342,20 @@ __onMouse(JSON.stringify(data));
     // --- Empty Stubs to prevent linker errors ---
     void Browser::Impl::handle_target_created(const json& ev) {}
     void Browser::Impl::handle_detached_from_target(const json& ev) {}
-    void Browser::Impl::handle_page_navigation(const json& ev) {}
     void Browser::Impl::handle_network_request_will_be_sent(const json& ev) {}
     void Browser::Impl::handle_network_response_received(const json& ev) {}
     void Browser::Impl::handle_network_loading_failed(const json& ev) {}
-    void Browser::Impl::fire_url(const std::string& url) {}
+
+    void Browser::Impl::fire_url(const std::string& url) {
+        std::vector<URLCallback> cbs;
+        {
+            std::lock_guard<std::mutex> lock(callback_mtx);
+            cbs.reserve(on_url_callbacks.size());
+            for (const auto& [id, cb] : on_url_callbacks)
+                if (cb) cbs.push_back(cb);
+        }
+        for (const auto& cb : cbs) cb(url);
+    }
 
     // ==================== watchInput ====================
 
@@ -364,6 +383,9 @@ __onMouse(JSON.stringify(data));
                         std::cout << "[EV] " << method << std::endl;
 
                     if (method == "Target.attachedToTarget") { impl_->handle_attached_to_target(ev); continue; }
+                    if (method == "Page.frameNavigated" || method == "Page.navigatedWithinDocument") {
+                        impl_->handle_page_navigation(ev); continue;
+                    }
                     if (method == "Target.targetCreated") { impl_->handle_target_created(ev); continue; }
                     if (method == "Target.detachedFromTarget") { impl_->handle_detached_from_target(ev); continue; }
                     if (method == "Page.frameNavigated" || method == "Page.navigatedWithinDocument") {
@@ -899,58 +921,6 @@ __onMouse(JSON.stringify(data));
         if (!nav) return nav.error();
 
         return {};                          
-    }
-
-
-    // ==================== http_get ====================
-
-    namespace {
-        std::string http_get(const std::string& host, const std::string& port, const std::string& target) {
-            namespace beast = boost::beast;
-            namespace http = boost::beast::http;
-            namespace net = boost::asio;
-            using tcp = boost::asio::ip::tcp;
-            constexpr auto kStepTimeout = std::chrono::seconds(5);
-            try {
-                net::io_context ioc;
-                tcp::resolver resolver(ioc);
-                beast::tcp_stream stream(ioc);
-                beast::error_code ec;
-                auto results = resolver.resolve(host, port, ec);
-                if (ec) return {};
-                stream.expires_after(kStepTimeout);
-                stream.async_connect(results, [&](beast::error_code e, const tcp::endpoint&) { ec = e; });
-                ioc.run(); ioc.restart();
-                if (ec) return {};
-                http::request<http::string_body> req{ http::verb::get, target, 11 };
-                req.set(http::field::host, host + ":" + port);
-#ifdef _WIN32
-                req.set(http::field::user_agent,
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
-#elif defined(__APPLE__)
-                req.set(http::field::user_agent,
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
-#else
-                req.set(http::field::user_agent,
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
-#endif
-                stream.expires_after(kStepTimeout);
-                http::async_write(stream, req, [&](beast::error_code e, std::size_t) { ec = e; });
-                ioc.run(); ioc.restart();
-                if (ec) return {};
-                beast::flat_buffer buffer;
-                http::response<http::string_body> res;
-                stream.expires_after(kStepTimeout);
-                http::async_read(stream, buffer, res, [&](beast::error_code e, std::size_t) { ec = e; });
-                ioc.run(); ioc.restart();
-                if (ec) return {};
-                return res.body();
-            }
-            catch (...) { return {}; }
-        }
     }
 
 } // namespace cdp

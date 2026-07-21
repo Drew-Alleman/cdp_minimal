@@ -3,11 +3,12 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
-#include <nlohmann/json.hpp>
 
-using json = nlohmann::json;
+#include "json.hpp"
 
 namespace cdp::detail {
+
+    using json = njson::json;
 
     void Channel::connect(const std::string& host,
         const std::string& port,
@@ -30,7 +31,7 @@ namespace cdp::detail {
 
     void Channel::stop_reader() noexcept {
         running_.store(false);
-        conn_.close();                 
+        conn_.close();
         if (reader_.joinable()) reader_.join();
     }
 
@@ -52,7 +53,7 @@ namespace cdp::detail {
     void Channel::close() noexcept {
         stop_events_.store(true);
         ev_cv_.notify_all();
-        stop_reader();                    
+        stop_reader();
         fail_all_pending("connection closed");
         ev_cv_.notify_all();
     }
@@ -71,7 +72,7 @@ namespace cdp::detail {
         }
         for (auto& p : doomed) {
             try { p->set_exception(std::make_exception_ptr(std::runtime_error(why))); }
-            catch (...) {}   
+            catch (...) {}
         }
     }
 
@@ -79,18 +80,18 @@ namespace cdp::detail {
         while (running_.load()) {
             std::string msg;
             try {
-                msg = conn_.read();         
+                msg = conn_.read();
             }
             catch (const std::exception& e) {
-                if (running_.load())          
+                if (running_.load())
                     std::cerr << "[READER] unexpected error: " << e.what() << "\n";
                 break;
             }
-            if (msg.empty()) break;        
+            if (msg.empty()) break;
 
             json j;
             try { j = json::parse(msg); }
-            catch (...) { continue; }        
+            catch (...) { continue; }
 
             if (j.contains("id")) {
                 const int id = j.value("id", -1);
@@ -105,7 +106,7 @@ namespace cdp::detail {
                 }
                 if (prom) {
                     try { prom->set_value(std::move(j)); }
-                    catch (...) {}          
+                    catch (...) {}
                 }
             }
             else if (j.contains("method")) {
@@ -120,7 +121,7 @@ namespace cdp::detail {
 
         running_.store(false);
         fail_all_pending("connection closed");
-        ev_cv_.notify_all();                
+        ev_cv_.notify_all();
     }
 
     json Channel::result_of(const std::string& method,
@@ -144,7 +145,7 @@ namespace cdp::detail {
 
         {
             std::lock_guard<std::mutex> lk(mtx_);
-            pending_.emplace(id, prom);      
+            pending_.emplace(id, prom);
         }
 
         {
@@ -161,11 +162,11 @@ namespace cdp::detail {
 
         if (fut.wait_for(command_timeout_) != std::future_status::ready) {
             std::lock_guard<std::mutex> lk(mtx_);
-            pending_.erase(id);             
+            pending_.erase(id);
             throw TimeoutError(method + ": timed out waiting for reply");
         }
 
-        json j = fut.get();                
+        json j = fut.get();
 
         if (j.contains("error")) {
             throw std::runtime_error(method + ": " +
@@ -183,7 +184,7 @@ namespace cdp::detail {
                 event_queue_.pop_front();
                 return ev;
             }
-            if (!running_.load()) return std::nullopt;  
+            if (!running_.load()) return std::nullopt;
             ev_cv_.wait_for(lk, event_poll_interval_);
         }
     }
